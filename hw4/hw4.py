@@ -5,7 +5,20 @@ import scipy.signal as scisig
 
 
 def HarrisCornerDet(img, sigma, local=1, k=0.05, filter_ratio=0.1):
+    '''
+    Description: Find the corners by Harris corner detector
+    Input:
+        img: input image
+        sigma: variance of the Gaussian filter
+        local: local neighborhood size for Non-maximum suppression
+        k: the ratio of det(C) and Tr(C)^2
+        filter_ratio: the threshold for Harris Response is set to filter_ratio * max(Response)
+    Output:
+        markerImg: Harris Response Image
+        pList: detected corner list
+    '''
     def HaarFilter(sigma=1):
+        # Output the Haar filter along both x and y directions
         s = round(np.ceil(4 * sigma))
         if s % 2: s += 1
         Fx = np.ones((s, s))
@@ -15,22 +28,24 @@ def HarrisCornerDet(img, sigma, local=1, k=0.05, filter_ratio=0.1):
 
     h, w = img.shape
     Fx, Fy = HaarFilter(sigma)
-    Dx = scisig.correlate2d(img, Fx, mode="same")
-    Dy = scisig.correlate2d(img, Fy, mode="same")
+    Dx = scisig.correlate2d(img, Fx, mode="same")  # compute the derivative along x axis
+    Dy = scisig.correlate2d(img, Fy, mode="same")  # compute the derivative along y axis
     Dx2 = Dx * Dx
     Dxy = Dx * Dy
     Dy2 = Dy * Dy
     sumSize = int(round(np.ceil(5*sigma)/2.0)*2+1)
-    sumFilter = np.ones((sumSize, sumSize))
-
-    Dx2 = scisig.correlate2d(Dx2, sumFilter, mode='same')
+    sumFilter = np.ones((sumSize, sumSize)) 
+    # sum the derivative squares in neighborhoods together
+    Dx2 = scisig.correlate2d(Dx2, sumFilter, mode='same') 
     Dxy = scisig.correlate2d(Dxy, sumFilter, mode='same')
     Dy2 = scisig.correlate2d(Dy2, sumFilter, mode='same')
+    # find the determination and trace of C matrix
     detC = Dx2 * Dy2 - Dxy * Dxy
     trC = Dx2 + Dy2
-    R = detC - k * trC * trC
-    thresh = filter_ratio * R.max()
+    R = detC - k * trC * trC   # Harris response map
+    thresh = filter_ratio * R.max() # threshold to get rid of the small responses
     markerImg = np.zeros_like(R)
+    # Non-maximum suppression to avoid redundant corners
     for i in range(local, h-local):
         for j in range(local, w-local):
             neighbor = R[i-local:i+local+1, j-local:j+local+1]
@@ -50,6 +65,10 @@ def DrawMarker(Img, pList, color=(0,0,255)):
 
 
 def HarrisFeatureMaking(img, pList, window_size):
+    '''
+    Description: The feature for correspondence making. It is the pixel values of the neighborhood
+        of size window_size x window_size
+    '''
     ws = window_size
     feature = np.zeros((len(pList), (2*ws+1)*(2*ws+1)))
     new_img = cv2.copyMakeBorder(img, ws, ws, ws, ws, cv2.BORDER_REPLICATE)
@@ -61,14 +80,19 @@ def HarrisFeatureMaking(img, pList, window_size):
 
 
 def cpMatching(f1, f2, method):
+    '''
+    Description: find the correspondence scores between points in f1 and f2. 
+    '''
     d1 = f1.shape[0]
     d2 = f2.shape[0]
-    if method == 'SSD':
+    if method == 'SSD': 
+        # sum of squared difference (f1-f2)^2 = f1^2 - 2*f1*f2 + f2^2
         f11 = np.sum(f1*f1, axis=1).reshape((d1, 1))
         f12 = np.matmul(f1, f2.T)
         f22 = np.sum(f2*f2, axis=1).reshape((1, d2))
         cp = -f11.repeat(d2, axis=1) + 2 * f12 - f22.repeat(d1, axis=0)
     elif method == 'NCC':
+        # normalized cross-correlation
         m1 = np.sum(f1, axis=1, keepdims=True)/f1.shape[1]
         m2 = np.sum(f2, axis=1, keepdims=True)/f2.shape[1]
         nf1 = f1 - m1
@@ -79,12 +103,18 @@ def cpMatching(f1, f2, method):
         denominator = np.matmul(denom_1, denom_2)
         cp = numerator / denominator
     else: print("\'Method\' has to be SSD or NCC")
-    f1_Matching = np.argmax(cp, axis=1)
-    f2_Matching = np.argmax(cp, axis=0)
+    f1_Matching = np.argmax(cp, axis=1)   # find the indices of features in f2 that match f1 features the most
+    f2_Matching = np.argmax(cp, axis=0)   # find the indices of features in f1 that match f2 features the most
     return cp, f1_Matching, f2_Matching
 
 
 def matchedImg(img1, img2, pList1, pList2, f1_f2, f2_f1):
+    '''
+    Description: find the correspondence pairs and mark them on the concated image
+    Input: 
+        f1_f2: the indices of features in f2 that match f1 features the most
+        f2_f1: the indices of features in f1 that match f2 features the most
+    '''
     def drawLines(img, p_start, p_end, color=(0,255,0)):
         image = np.copy(img)
         for i in range(len(p_start)):
@@ -98,6 +128,7 @@ def matchedImg(img1, img2, pList1, pList2, f1_f2, f2_f1):
 
     h1, w1 = img1.shape[:2]
     h2, w2 = img2.shape[:2]
+    # the "if-else"s: align the sizes of image 1 and 2.
     if h1 > h2:
         im2 = cv2.copyMakeBorder(im2, 0, h1-h2, 0, 0, cv2.BORDER_REPLICATE)
         h = h1
@@ -114,13 +145,15 @@ def matchedImg(img1, img2, pList1, pList2, f1_f2, f2_f1):
         w = w2
     else: w = w1
 
+    # Mark the detected corners on the concated image
     concatIm = np.concatenate((im1, im2), axis=1)
     npList2 = [(j+w, i) for (j, i) in pList2]
     concatIm = DrawMarker(concatIm, pList1, color=(255,0,0))
     concatIm = DrawMarker(concatIm, npList2, color=(255,0,0))
 
-    bestMatch_1 = []
-    bestMatch_2 = []
+    # find the corners in f1 and f2 that have a good match between each other
+    bestMatch_1 = [] # the indices of corners in image 1 that have a good match in f2
+    bestMatch_2 = [] # the corresponding indices of corners in image 2 
     for i, idx2 in enumerate(f1_f2):
         if i == f2_f1[idx2]:
             bestMatch_1.append(pList1[i])
@@ -229,21 +262,21 @@ taskSIFT(img1, img2, 300)
 taskSURF(img1, img2, 2000)
 
 
-# folder_result = os.path.join('/home/xingguang/Documents/ECE661/hw4/Results', 'pair2')
-# img1 = img_2_1
-# img2 = img_2_2
-# taskHarris(img1, img2, sigmas, folder_result, filter_ratio=0.15)
-# taskSIFT(img1, img2, 200)
-# taskSURF(img1, img2, 20000)
+folder_result = os.path.join('/home/xingguang/Documents/ECE661/hw4/Results', 'pair2')
+img1 = img_2_1
+img2 = img_2_2
+taskHarris(img1, img2, sigmas, folder_result, filter_ratio=0.15)
+taskSIFT(img1, img2, 200)
+taskSURF(img1, img2, 20000)
 
 
-# folder_result = os.path.join('/home/xingguang/Documents/ECE661/hw4/Results', 'pair3')
-# img1 = img_3_1
-# img2 = img_3_2
-# taskHarris(img1, img2, sigmas, folder_result, filter_ratio=0.05)
-# taskSIFT(img1, img2, 200)
-# taskSURF(img1, img2, 7500)
-'''
+folder_result = os.path.join('/home/xingguang/Documents/ECE661/hw4/Results', 'pair3')
+img1 = img_3_1
+img2 = img_3_2
+taskHarris(img1, img2, sigmas, folder_result, filter_ratio=0.05)
+taskSIFT(img1, img2, 200)
+taskSURF(img1, img2, 7500)
+
 
 folder_result = os.path.join('/home/xingguang/Documents/ECE661/hw4/Results', 'pair4')
 img1 = img_4_1
@@ -259,4 +292,3 @@ img2 = img_5_2
 taskHarris(img1, img2, sigmas, folder_result, filter_ratio=0.01)
 taskSIFT(img1, img2, 200)
 taskSURF(img1, img2, 5000)
-'''
